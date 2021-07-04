@@ -7,19 +7,167 @@ output:
 
 
 ## Loading and preprocessing the data
+First, we load the data set:
 
+```{r}
+activity <- read.csv("activity.csv")
+```
 
 
 ## What is mean total number of steps taken per day?
+We can use tapply and the sum() function to generate daily totals, from which
+we can create a histogram:
 
+```{r}
+dailySteps <-tapply(activity$steps, activity$date, sum, na.rm = TRUE)
+dailySteps
+hist(dailySteps, main = "Histogram of Daily Step Totals", xlab = "Daily Steps")
+```
+
+We can also take the mean and median of total steps per day:
+
+```{r}
+mean(dailySteps)
+median(dailySteps)
+```
 
 
 ## What is the average daily activity pattern?
 
+What does a "typical day" look like? Let's average the steps by time interval
+and plot as a time series:
+
+```{r}
+intervalAverages <-tapply(activity$steps, activity$interval, mean, na.rm = TRUE)
+plot((names(intervalAverages)), intervalAverages, type = "l", xlab = "Time of Day",
+     ylab = "Average Steps")
+```
+
+The time of day with the highest average is **8:35 a.m.** :
+
+```{r}
+highestAvg <-intervalAverages[order(intervalAverages,decreasing = TRUE)[1]]
+highestAvg
+```
 
 
 ## Imputing missing values
+2304 rows are missing data:
 
+```{r}
+nrow(activity[rowSums(is.na(activity))>0,])
+```
+
+To replace these, I started by extracting the rows with missing values:
+
+```{r}
+naRows <-activity[is.na(activity$steps),]
+head(naRows)
+```
+
+We're going to replace with the average steps value for that time interval. 
+
+Recall, we already have this in intervalAverages.
+
+I've created a (very narrow usage) function that takes a row number.
+
+The function will:
+
+1. Look up the time interval from column three of that row in naRow
+
+2. Use that value to find the average from intervalAverages
+
+```{r}
+getAvg <- function(row) {
+     time <- naRows[row,3]
+     intervalAverages[as.character(time)]
+}
+```
+
+We can quickly use sapply to run this over every row in naRows, creating our 
+replacement set of the corresponding interval average for each NA value:
+
+```{r}
+replaceSet <-sapply(1:nrow(naRows), getAvg)
+head(replaceSet)
+```
+
+Now to plug that in and fix the original dataset. Since the set we created is in
+the same order, it's rather simple:
+
+```{r}
+activity[is.na(activity$steps),1] <- replaceSet
+```
+
+How does our histogram, mean, and median look with these changes? Well, a lot
+more mean-reverting:
+
+```{r}
+dailySteps <-tapply(activity$steps, activity$date, sum)
+dailySteps
+hist(dailySteps, main = "Histogram of Daily Step Totals", xlab = "Daily Steps")
+mean(dailySteps)
+median(dailySteps)
+```
 
 
 ## Are there differences in activity patterns between weekdays and weekends?
+
+We create a factor variable with two levels -- weekday and weekend
+
+```{r}
+dayOfWeek <- sapply(as.Date(activity$date),weekdays)
+dayOfWeek[dayOfWeek %in% c("Monday","Tuesday","Wednesday","Thursday","Friday")] <- "Weekday"
+dayOfWeek[dayOfWeek %in% c("Saturday","Sunday")] <- "Weekend"
+weekDayOrEnd <- as.factor(dayOfWeek)
+activity <-cbind(activity, weekDayOrEnd)
+head(activity)
+```
+
+Next, we'll separate the weekend and weekday data:
+
+```{r}
+weekendData <- activity[weekDayOrEnd=="Weekend",]
+weekdayData <- activity[weekDayOrEnd=="Weekday",]
+```
+
+With our data separated, we can aggregate. We'll do weekday first.
+
+I create a data frame of the aggregate data, and add a column that signifies it to 
+be a weekday (this will come in handy later!)
+
+```{r}
+stepsWeekday <- aggregate(weekdayData$steps,list(weekdayData$interval),mean, na.rm =TRUE)
+weekdayLabel <- rep("weekday",times = nrow(stepsWeekday))
+stepsWeekday <- cbind(stepsWeekday, weekdayLabel)
+head(stepsWeekday)
+```
+
+The process is identical for the weekend data:
+
+``` {r}
+stepsWeekend <- aggregate(weekendData$steps,list(weekendData$interval),mean, na.rm =TRUE)
+weekendLabel <- rep("weekend",times = nrow(stepsWeekend))
+stepsWeekend <- cbind(stepsWeekend, weekendLabel)
+head(stepsWeekend)
+```
+
+With both made, we'll give them synced up variable names so we can rbind:
+
+```{r}
+names(stepsWeekend) <- c("Interval","Steps","day_or_end")
+names(stepsWeekday) <- c("Interval","Steps","day_or_end")
+weeksData <- rbind(stepsWeekday, stepsWeekend)
+```
+
+Finally, we need to make the variable *day_or_end* a factor so that we can panel. 
+Then we can plot using ggplot2! 
+
+```{r}
+weeksData$day_or_end <- as.factor(weeksData$day_or_end)
+library(ggplot2)
+ggWeek <- ggplot(weeksData, aes(x = Interval, y = Steps)) + geom_line() + 
+          ylab("Average Number of Steps") + xlab("Interval") + 
+          ggtitle("Averages Steps by Interval: Weekends Vs Weekdays") + 
+          facet_grid(weeksData$day_or_end)
+ggWeek
